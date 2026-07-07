@@ -1,0 +1,84 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+	<meta charset="utf-8">
+	<title>LiDAR 업로드 - Lane Digitize Tool</title>
+	<style>
+		body {
+			font-family: sans-serif;
+			background: #1a1a1a;
+			color: #eee;
+			display: flex;
+			align-items: center;
+			justify-content: center;
+			height: 100vh;
+			margin: 0;
+		}
+		.box {
+			background: #262626;
+			padding: 32px 40px;
+			border-radius: 8px;
+			min-width: 360px;
+			text-align: center;
+		}
+		h1 { font-size: 18px; margin-bottom: 24px; }
+		input[type=file] { margin-bottom: 16px; }
+		button {
+			background: #3a7ca5;
+			color: white;
+			border: none;
+			padding: 8px 20px;
+			border-radius: 4px;
+			cursor: pointer;
+			font-size: 14px;
+		}
+		button:disabled { background: #555; cursor: not-allowed; }
+		#status { margin-top: 16px; font-size: 13px; color: #ccc; min-height: 20px; }
+		#error { color: #ff6b6b; }
+	</style>
+</head>
+<body>
+	<div class="box">
+		<h1>LAS/LAZ 파일 업로드</h1>
+		<input type="file" id="fileInput" accept=".las,.laz">
+		<br>
+		<button id="uploadBtn">업로드 및 처리 시작</button>
+		<div id="status"></div>
+	</div>
+
+	<script>
+		const fileInput = document.getElementById('fileInput');
+		const uploadBtn = document.getElementById('uploadBtn');
+		const status = document.getElementById('status');
+
+		uploadBtn.addEventListener('click', async () => {
+			const file = fileInput.files[0];
+			if (!file) {
+				status.innerHTML = '<span id="error">파일을 선택해주세요.</span>';
+				return;
+			}
+
+			uploadBtn.disabled = true;
+			status.textContent = '업로드 및 처리 중... (지면분류 + 변환, 수 초~수 분 소요)';
+
+			const formData = new FormData();
+			formData.append('file', file);
+
+			try {
+				const response = await fetch('/api/process', {method: 'POST', body: formData});
+				const data = await response.json();
+
+				if (!response.ok) {
+					throw new Error(data.detail || '처리 중 오류가 발생했습니다.');
+				}
+
+				status.textContent = '완료! 뷰어로 이동합니다...';
+				window.location.href = `/examples/lane_digitize.html?dataset=${encodeURIComponent(data.dataset)}`;
+			} catch (err) {
+				status.innerHTML = `<span id="error">${err.message}</span>`;
+				uploadBtn.disabled = false;
+			}
+		});
+	</script>
+</body>
+</html>

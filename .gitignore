@@ -31,3 +31,13 @@ libs/CesiumUnminified
 /pointclouds/morro_bay_converted
 /pointclouds/helimap_epalinges
 pointclouds/F
+
+# runtime output from the Lane Digitize Tool (webapp/server.py) - user-uploaded
+# and converted datasets are named "<sanitized-filename>_<YYYYMMDD>_<HHMMSS>",
+# not example data, shouldn't be committed
+/pointclouds/*_[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]_[0-9][0-9][0-9][0-9][0-9][0-9]/
+/pointclouds/28_converted/
+/pointclouds/28_ground_converted/
+
+__pycache__/
+*.pyc

@@ -12,6 +12,7 @@ import {Gradients} from "../../materials/Gradients.js";
 
 import {MeasurePanel} from "./MeasurePanel.js";
 import {DistancePanel} from "./DistancePanel.js";
+import {LanePanel} from "./LanePanel.js";
 import {PointPanel} from "./PointPanel.js";
 import {AreaPanel} from "./AreaPanel.js";
 import {AnglePanel} from "./AnglePanel.js";
@@ -894,6 +895,7 @@ export class PropertiesPanel{
 	setMeasurement(object){
 
 		let TYPE = {
+			LANE: {panel: LanePanel},
 			DISTANCE: {panel: DistancePanel},
 			AREA: {panel: AreaPanel},
 			POINT: {panel: PointPanel},
@@ -907,7 +909,9 @@ export class PropertiesPanel{
 
 		let getType = (measurement) => {
 			if (measurement instanceof Measure) {
-				if (measurement.showDistances && !measurement.showArea && !measurement.showAngles) {
+				if (measurement.isLane) {
+					return TYPE.LANE;
+				} else if (measurement.showDistances && !measurement.showArea && !measurement.showAngles) {
 					return TYPE.DISTANCE;
 				} else if (measurement.showDistances && measurement.showArea && !measurement.showAngles) {
 					return TYPE.AREA;

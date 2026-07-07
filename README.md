@@ -1,4 +1,41 @@
 
+# Lane Digitize Tool
+
+A desktop tool for extracting road lane markings from mobile LiDAR scans (LAS/LAZ) and
+exporting them as ESRI Shapefiles. Built on top of [Potree](#about) (WebGL point cloud
+viewer), [PotreeConverter](https://github.com/potree/PotreeConverter), [PDAL](https://pdal.io/)
+and [GDAL](https://gdal.org/).
+
+Upload a LAS/LAZ file → it's automatically ground-classified (PDAL `filters.smrf`) and
+converted to a streamable point cloud (PotreeConverter) → digitize lane lines directly on
+the point cloud with the "Lane" tool → export as a georeferenced Shapefile.
+
+## Prerequisites
+
+* [Node.js](https://nodejs.org/) + npm
+* Python 3.9+ with:
+  * `pip install fastapi uvicorn python-multipart`
+  * [PDAL](https://pdal.io/) (e.g. `conda install -c conda-forge pdal` or your distro's package manager) — used for ground classification and reading LAS coordinate system metadata
+  * [GDAL](https://gdal.org/) / `ogr2ogr` on PATH — used for the Shapefile export
+* Linux x86_64: the bundled `PotreeConverter/PotreeConverter` binary works out of the box.
+  Windows/Mac: replace it with a build from [potree/PotreeConverter](https://github.com/potree/PotreeConverter).
+
+## Setup & Run
+
+```bash
+npm install        # installs gulp/rollup build tooling + electron, and builds potree (postinstall)
+npm run desktop     # starts the backend and opens the app window
+```
+
+The app opens on an upload screen. Pick a `.las`/`.laz` file, wait for processing, then
+use the "Lane" toolbar icon to click along lane markings. Select a drawn lane in the Scene
+panel to tag its type (solid/dashed/stop line) and color. Use the "SHP" button in the
+Scene panel's export row to download a Shapefile.
+
+If you'd rather run it as a plain web app instead of the Electron window, `python
+webapp/server.py` starts just the backend; visit `http://localhost:8080/upload`.
+
+---
 
 # About
 

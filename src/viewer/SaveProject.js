@@ -116,6 +116,9 @@ function createMeasurementData(measurement){
 		showAzimuth: measurement.showAzimuth,
 		showEdges: measurement.showEdges,
 		color: measurement.color.toArray(),
+		isLane: measurement.isLane,
+		laneType: measurement.laneType,
+		laneColor: measurement.laneColor,
 	};
 
 	return data;

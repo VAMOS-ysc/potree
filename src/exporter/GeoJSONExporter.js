@@ -15,6 +15,10 @@ export class GeoJSONExporter{
 
 		let features = [];
 
+		let laneProperties = measurement.isLane
+			? {laneType: measurement.laneType, laneColor: measurement.laneColor}
+			: {};
+
 		if (coords.length === 1) {
 			let feature = {
 				type: 'Feature',
@@ -23,7 +27,8 @@ export class GeoJSONExporter{
 					coordinates: coords[0]
 				},
 				properties: {
-					name: measurement.name
+					name: measurement.name,
+					...laneProperties
 				}
 			};
 			features.push(feature);
@@ -35,7 +40,8 @@ export class GeoJSONExporter{
 					'coordinates': coords
 				},
 				'properties': {
-					name: measurement.name
+					name: measurement.name,
+					...laneProperties
 				}
 			};
 

@@ -104,6 +104,13 @@ function loadMeasurement(viewer, data){
 	measure.showEdges = data.showEdges;
 	// color
 
+	if(data.isLane){
+		measure.isLane = data.isLane;
+		measure.laneType = data.laneType;
+		measure.laneColor = data.laneColor;
+		measure.color = new THREE.Color(data.laneColor === 'yellow' ? 0xffdd00 : 0xffffff);
+	}
+
 	for(const point of data.points){
 		const pos = new THREE.Vector3(...point);
 		measure.addMarker(pos);

@@ -125,6 +125,31 @@ export class Sidebar{
 			}
 		));
 
+		// LANE
+		elToolbar.append(this.createToolIcon(
+			Potree.resourcePath + '/icons/lane.svg',
+			'Lane',
+			() => {
+				$('#menu_measurements').next().slideDown();
+				let measurement = this.measuringTool.startInsertion({
+					showDistances: true,
+					showArea: false,
+					closed: false,
+					maxMarkers: Infinity,
+					name: 'Lane'});
+
+				measurement.isLane = true;
+				measurement.laneType = 'solid';
+				measurement.laneColor = 'white';
+				measurement.color = new THREE.Color(0xffffff);
+
+				let measurementsRoot = $("#jstree_scene").jstree().get_json("measurements");
+				let jsonNode = measurementsRoot.children.find(child => child.data.uuid === measurement.uuid);
+				$.jstree.reference(jsonNode.id).deselect_all();
+				$.jstree.reference(jsonNode.id).select_node(jsonNode.id);
+			}
+		));
+
 		// HEIGHT
 		elToolbar.append(this.createToolIcon(
 			Potree.resourcePath + '/icons/height.svg',
@@ -307,12 +332,14 @@ export class Sidebar{
 			let geoJSONIcon = `${Potree.resourcePath}/icons/file_geojson.svg`;
 			let dxfIcon = `${Potree.resourcePath}/icons/file_dxf.svg`;
 			let potreeIcon = `${Potree.resourcePath}/icons/file_potree.svg`;
+			let shpIcon = `${Potree.resourcePath}/icons/file_shp.svg`;
 
 			elExport.append(`
 				Export: <br>
 				<a href="#" download="measure.json"><img name="geojson_export_button" src="${geoJSONIcon}" class="button-icon" style="height: 24px" /></a>
 				<a href="#" download="measure.dxf"><img name="dxf_export_button" src="${dxfIcon}" class="button-icon" style="height: 24px" /></a>
 				<a href="#" download="potree.json5"><img name="potree_export_button" src="${potreeIcon}" class="button-icon" style="height: 24px" /></a>
+				<a href="#" download="measure_shp.zip"><img name="shp_export_button" src="${shpIcon}" class="button-icon" style="height: 24px" /></a>
 			`);
 
 			let elDownloadJSON = elExport.find("img[name=geojson_export_button]").parent();
@@ -355,6 +382,37 @@ export class Sidebar{
 
 				let url = window.URL.createObjectURL(new Blob([dataString], {type: 'data:application/octet-stream'}));
 				elDownloadPotree.attr('href', url);
+			});
+
+			let elDownloadSHP = elExport.find("img[name=shp_export_button]").parent();
+			elDownloadSHP.click( async (event) => {
+				event.preventDefault();
+
+				let scene = this.viewer.scene;
+				let measurements = [...scene.measurements, ...scene.profiles, ...scene.volumes];
+
+				if(measurements.length === 0){
+					this.viewer.postError("no measurements to export");
+					return;
+				}
+
+				let geoJson = GeoJSONExporter.toString(measurements);
+
+				let epsg = window.datasetMeta && window.datasetMeta.epsg;
+				let exportUrl = "/api/export-shp" + (epsg ? `?epsg=${encodeURIComponent(epsg)}` : "");
+				let response = await fetch(exportUrl, {method: "POST", body: geoJson});
+
+				if(!response.ok){
+					this.viewer.postError("SHP export failed");
+					return;
+				}
+
+				let blob = await response.blob();
+				let blobUrl = window.URL.createObjectURL(blob);
+
+				let elTemp = $(`<a href="${blobUrl}" download="measure_shp.zip"></a>`);
+				elTemp[0].click();
+				window.URL.revokeObjectURL(blobUrl);
 			});
 		}
 

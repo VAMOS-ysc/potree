@@ -222,6 +222,16 @@ var readMultiPoint = function(record) {
   return {type: "MultiPoint", coordinates: coordinates};
 };
 
+// MultiPointZ (shape type 18): same layout as MultiPoint, plus a trailing Zrange
+// (2 doubles) + one Z double per point, in the same order as the XY points above.
+var readMultiPointZ = function(record) {
+  var i = 40, j, n = record.getInt32(36, true), coordinates = new Array(n);
+  for (j = 0; j < n; ++j, i += 16) coordinates[j] = [record.getFloat64(i, true), record.getFloat64(i + 8, true)];
+  i += 16;
+  for (j = 0; j < n; ++j, i += 8) coordinates[j].push(record.getFloat64(i, true));
+  return {type: "MultiPoint", coordinates: coordinates};
+};
+
 var readNull = function() {
   return null;
 };
@@ -230,10 +240,48 @@ var readPoint = function(record) {
   return {type: "Point", coordinates: [record.getFloat64(4, true), record.getFloat64(12, true)]};
 };
 
+// PointZ (shape type 11): X at 4, Y at 12, Z at 20 - readPoint (used for plain
+// 2D Point too) never read this, so every Point feature silently lost its elevation.
+var readPointZ = function(record) {
+  return {type: "Point", coordinates: [record.getFloat64(4, true), record.getFloat64(12, true), record.getFloat64(20, true)]};
+};
+
 var readPolygon = function(record) {
   var i = 44, j, n = record.getInt32(36, true), m = record.getInt32(40, true), parts = new Array(n), points = new Array(m), polygons = [], holes = [];
   for (j = 0; j < n; ++j, i += 4) parts[j] = record.getInt32(i, true);
   for (j = 0; j < m; ++j, i += 16) points[j] = [record.getFloat64(i, true), record.getFloat64(i + 8, true)];
+
+  parts.forEach(function(i, j) {
+    var ring = points.slice(i, parts[j + 1]);
+    if (ringClockwise(ring)) polygons.push([ring]);
+    else holes.push(ring);
+  });
+
+  holes.forEach(function(hole) {
+    polygons.some(function(polygon) {
+      if (ringContainsSome(polygon[0], hole)) {
+        polygon.push(hole);
+        return true;
+      }
+    }) || polygons.push([hole]);
+  });
+
+  return polygons.length === 1
+      ? {type: "Polygon", coordinates: polygons[0]}
+      : {type: "MultiPolygon", coordinates: polygons};
+};
+
+// PolygonZ (shape type 15): same ring layout as Polygon, plus a trailing Zrange
+// (2 doubles) + one Z double per point (original read order, before ring-splitting) -
+// mirrors readPolyLineZ below. readPolygon alone (reused for both 5 and 15 previously)
+// never read this, so every Polygon feature (e.g. crosswalks) silently lost its
+// per-vertex elevation and fell back to one flat Z for the whole shape.
+var readPolygonZ = function(record) {
+  var i = 44, j, n = record.getInt32(36, true), m = record.getInt32(40, true), parts = new Array(n), points = new Array(m), polygons = [], holes = [];
+  for (j = 0; j < n; ++j, i += 4) parts[j] = record.getInt32(i, true);
+  for (j = 0; j < m; ++j, i += 16) points[j] = [record.getFloat64(i, true), record.getFloat64(i + 8, true)];
+  i += 16;
+  for (j = 0; j < m; ++j, i += 8) points[j].push(record.getFloat64(i, true));
 
   parts.forEach(function(i, j) {
     var ring = points.slice(i, parts[j + 1]);
@@ -335,10 +383,10 @@ var types$1 = {
   3: readPolyLine,
   5: readPolygon,
   8: readMultiPoint,
-  11: readPoint,
+  11: readPointZ,
   13: readPolyLineZ,
-  15: readPolygon,
-  18: readMultiPoint
+  15: readPolygonZ,
+  18: readMultiPointZ
 };
 
 var shp = function(source) {

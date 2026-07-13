@@ -1,0 +1,153 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+	<meta charset="utf-8">
+	<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+	<title>Potree Viewer - SHP Overlay Test</title>
+
+	<link rel="stylesheet" type="text/css" href="../build/potree/potree.css">
+	<link rel="stylesheet" type="text/css" href="../libs/jquery-ui/jquery-ui.min.css">
+	<link rel="stylesheet" type="text/css" href="../libs/openlayers3/ol.css">
+	<link rel="stylesheet" type="text/css" href="../libs/spectrum/spectrum.css">
+	<link rel="stylesheet" type="text/css" href="../libs/jstree/themes/mixed/style.css">
+</head>
+
+<body>
+	<script src="../libs/jquery/jquery-3.1.1.min.js"></script>
+	<script src="../libs/spectrum/spectrum.js"></script>
+	<script src="../libs/jquery-ui/jquery-ui.min.js"></script>
+	<script src="../libs/other/BinaryHeap.js"></script>
+	<script src="../libs/tween/tween.min.js"></script>
+	<script src="../libs/d3/d3.js"></script>
+	<script src="../libs/proj4/proj4.js"></script>
+	<script src="../libs/openlayers3/ol.js"></script>
+	<script src="../libs/i18next/i18next.js"></script>
+	<script src="../libs/jstree/jstree.js"></script>
+	<script src="../build/potree/potree.js"></script>
+	<script src="../libs/plasio/js/laslaz.js"></script>
+	<script src="../libs/shapefile/shapefile.js"></script>
+
+	<div class="potree_container" style="position: absolute; width: 100%; height: 100%; left: 0px; top: 0px; ">
+		<div id="potree_render_area" style="background-image: url('../build/potree/resources/images/background.jpg');"></div>
+		<div id="potree_sidebar_container"> </div>
+	</div>
+
+	<div id="debug_panel" style="position: absolute; bottom: 0; left: 0; z-index: 1000; background: rgba(0,0,0,0.8); color: lime; font-family: monospace; font-size: 14px; padding: 8px; max-width: 100%; white-space: pre-wrap;"></div>
+
+	<div id="z_control" style="display:none; position: absolute; top: 8px; right: 8px; z-index: 1000; background: rgba(0,0,0,0.8); color: white; font-family: monospace; font-size: 13px; padding: 10px; border-radius: 4px;">
+		SHP height offset: <span id="z_offset_value">0.0</span> m<br>
+		<input id="z_offset_slider" type="range" min="-5" max="5" step="0.05" value="0" style="width: 260px;">
+	</div>
+
+	<script type="module">
+
+		import * as THREE from "../libs/three.js/build/three.module.js";
+
+		const debugPanel = document.getElementById("debug_panel");
+		const debugLog = (msg) => { debugPanel.textContent += msg + "\n"; console.log(msg); };
+		window.addEventListener("error", (e) => debugLog("ERROR: " + e.message));
+
+		// usage: test_shp_overlay.html?dataset=<pointcloud dataset id>&shp=<url to .shp, WGS84 lon/lat>
+		const params = new URLSearchParams(window.location.search);
+		const dataset = params.get("dataset");
+		const shpUrl = params.get("shp");
+
+		if (!dataset) {
+			document.body.innerHTML = "<h2 style='color:white'>missing ?dataset=&lt;id&gt; (a dataset already under /pointclouds/)</h2>";
+			throw new Error("no dataset specified");
+		}
+
+		const datasetPath = `/pointclouds/${dataset}`;
+		const meta = await (await fetch(`${datasetPath}/potree_meta.json`)).json();
+		proj4.defs(meta.epsg, meta.proj4);
+
+		window.viewer = new Potree.Viewer(document.getElementById("potree_render_area"));
+		viewer.setEDLEnabled(true);
+		viewer.setFOV(60);
+		viewer.setPointBudget(3_000_000);
+		viewer.setBackground("gradient");
+		viewer.setDescription(`${meta.sourceFile} - ${meta.epsg}` + (shpUrl ? ` + ${shpUrl}` : ""));
+
+		viewer.loadGUI(() => {
+			viewer.setLanguage('en');
+			$("#menu_tools").next().show();
+			$("#menu_scene").next().show();
+			viewer.toggleSidebar();
+		});
+
+		const {pointcloud} = await Potree.loadPointCloud(`${datasetPath}/metadata.json`, dataset);
+		let material = pointcloud.material;
+		material.size = 1;
+		material.pointSizeType = Potree.PointSizeType.ADAPTIVE;
+		material.shape = Potree.PointShape.SQUARE;
+		material.activeAttributeName = "intensity gradient";
+		viewer.scene.addPointCloud(pointcloud);
+		viewer.fitToScreen();
+
+		debugLog(`pointcloud bbox min: ${JSON.stringify(pointcloud.boundingBox.min)}`);
+		debugLog(`pointcloud bbox max: ${JSON.stringify(pointcloud.boundingBox.max)}`);
+		debugLog(`pointcloud.projection: ${pointcloud.projection}`);
+
+		if (shpUrl) {
+			try {
+				const loader = new Potree.ShapefileLoader();
+
+				// ?nativeCrs=1 - the SHP is already reprojected into the point cloud's local CRS
+				// server-side (webapp/drape_shp.py, which also bakes real per-vertex ground height
+				// from SMRF classification instead of one flat Z) - skip WGS84 reprojection then.
+				if (params.get("nativeCrs")) {
+					debugLog("nativeCrs=1: skipping WGS84->pointcloud reprojection, using coordinates as-is");
+				} else {
+					// HD map SHP is assumed WGS84 lon/lat - reproject into the point cloud's local CRS.
+					// NOTE: pointcloud.projection is just the short EPSG code ("EPSG:32652"), not a usable
+					// proj4 definition string (proj4js has no built-in EPSG database) - use our own meta.proj4.
+					proj4.defs("WGS84", "+proj=longlat +ellps=WGS84 +datum=WGS84 +no_defs");
+					proj4.defs("pointcloud", meta.proj4);
+					loader.transform = proj4("WGS84", "pointcloud");
+				}
+
+				// fallback flat height for any vertex without its own baked-in elevation
+				// (pointcloud.boundingBox is LOCAL space - need the world-space box for a real Z)
+				loader.z = viewer.getBoundingBox([pointcloud]).min.z;
+
+				debugLog("loading shapefile: " + shpUrl + " (fallback z = " + loader.z + ")");
+
+				const shp = await loader.load(shpUrl);
+				viewer.scene.scene.add(shp.node);
+
+				// bright green so the overlay is unambiguous against the point cloud for a quick visual check
+				shp.node.traverse(node => {
+					if(node.material){
+						node.material.color.setRGB(0, 1, 0);
+					}
+				});
+
+				debugLog(`loaded ${shp.features.length} features (${shp.node.children.length} rendered) from ${shpUrl}`);
+
+				viewer.addEventListener("update", () => {
+					const size = viewer.renderer.getSize(new THREE.Vector2());
+					shp.setResolution(size.width, size.height);
+				});
+
+				// loader.z is just an estimate (point cloud's overall lowest point, which includes
+				// noise/outliers and isn't necessarily the true road surface) - let it be adjusted
+				// interactively rather than guessing a perfect auto value
+				const zControl = document.getElementById("z_control");
+				const zSlider = document.getElementById("z_offset_slider");
+				const zValueLabel = document.getElementById("z_offset_value");
+				zControl.style.display = "block";
+				zSlider.addEventListener("input", () => {
+					const offset = parseFloat(zSlider.value);
+					zValueLabel.textContent = offset.toFixed(2);
+					shp.node.position.z = offset;
+				});
+			} catch (err) {
+				debugLog("SHP LOAD ERROR: " + err.message + "\n" + err.stack);
+			}
+		}
+
+	</script>
+
+
+  </body>
+</html>

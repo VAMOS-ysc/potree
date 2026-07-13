@@ -111,6 +111,15 @@
 				<input type="file" id="las_import_input" accept=".las,.laz" multiple />
 			</div>
 
+			<div id="scene_import_shp">
+				Import SHP overlay (drapes onto the last loaded LAS)<br>
+				<small>select all sidecar files together: .shp + .shx + .dbf + .prj (ctrl/shift-click)</small><br>
+				<input type="file" id="shp_import_input" accept=".shp,.shx,.dbf,.prj,.cpg" multiple />
+				<br>
+				SHP height offset: <span id="shp_z_offset_value">0.0</span> m<br>
+				<input type="range" id="shp_z_offset_slider" min="-5" max="5" step="0.05" value="0" style="width: 100%;" />
+			</div>
+
 			<div id="scene_export"></div>
 
 			<div class="divider"><span>Objects</span></div>

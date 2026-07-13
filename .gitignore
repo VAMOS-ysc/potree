@@ -41,3 +41,6 @@ pointclouds/F
 
 __pycache__/
 *.pyc
+
+# private HD map data copied in for local SHP overlay testing - not example data
+/webapp/hdmap/

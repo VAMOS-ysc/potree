@@ -8,6 +8,7 @@ Run with:
 """
 
 import json
+import logging
 import os
 import re
 import shutil
@@ -17,9 +18,17 @@ import zipfile
 from datetime import datetime
 from pathlib import Path
 
-from fastapi import FastAPI, File, HTTPException, Request, UploadFile
+from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
+
+import pdal
+
+from drape_shp import drape_shapefile
+from ground_proxy import build_ground_proxy, save_ground_proxy
+
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 POINTCLOUDS_DIR = REPO_ROOT / "pointclouds"
@@ -55,11 +64,22 @@ def get_proj4(las_path: Path) -> tuple[str, str]:
 
 
 def is_already_classified(las_path: Path) -> bool:
-	result = subprocess.run(
-		["pdal", "info", "--stats", "--dimensions", "Classification", str(las_path)],
-		capture_output=True, text=True, check=True,
-	)
-	stats = json.loads(result.stdout)["stats"]["statistic"][0]
+	# Sample just the first 200k points (readers.las' own `count` limits reading at
+	# the source, not just after the fact) rather than a full-file stats scan - on a
+	# 194M point / 6GB LAS this was measured at ~86s full-scan vs ~0.1s sampled.
+	# Classification is either present for the whole file or absent for all of it in
+	# every real file seen here, so a prefix sample is as reliable as a full scan.
+	pipeline = pdal.Pipeline(json.dumps({
+		"pipeline": [
+			{"type": "readers.las", "filename": str(las_path), "count": 200_000},
+			{"type": "filters.stats", "dimensions": "Classification"},
+		]
+	}))
+	pipeline.execute()
+	meta = pipeline.metadata
+	if isinstance(meta, str):
+		meta = json.loads(meta)
+	stats = meta["metadata"]["filters.stats"]["statistic"][0]
 	return stats["maximum"] > 0
 
 
@@ -124,7 +144,85 @@ async def process_pointcloud(file: UploadFile = File(...)):
 		meta = {"epsg": epsg, "proj4": proj4, "sourceFile": file.filename}
 		(out_dir / "potree_meta.json").write_text(json.dumps(meta, indent=2))
 
+		# Best-effort: save a ground-height grid alongside the converted point cloud, built
+		# from the classification PDAL already just did (no extra classification pass) - lets
+		# /api/drape-shp later drape an HD-map overlay onto real ground height for this
+		# dataset without needing the original LAS again (which isn't persisted past this point).
+		try:
+			ground = build_ground_proxy(str(source_for_conversion))
+			if ground is not None:
+				save_ground_proxy(out_dir / "ground_proxy.npz", *ground)
+		except Exception:
+			logger.exception("failed to build ground proxy for %s", dataset_id)
+
 	return JSONResponse({"dataset": dataset_id})
+
+
+@app.post("/api/drape-shp")
+async def drape_shp_endpoint(dataset: str = Form(...), files: list[UploadFile] = File(...)):
+	out_dir = POINTCLOUDS_DIR / dataset
+	ground_proxy_path = out_dir / "ground_proxy.npz"
+	metadata_path = out_dir / "metadata.json"
+	meta_path = out_dir / "potree_meta.json"
+
+	if not out_dir.is_dir():
+		raise HTTPException(404, f"Unknown dataset: {dataset}")
+	if not ground_proxy_path.exists():
+		raise HTTPException(400, "No ground height data for this dataset - it was likely uploaded "
+			"before overlay draping was added. Re-upload the LAS/LAZ to enable this.")
+
+	metadata = json.loads(metadata_path.read_text())
+	bbox = metadata["boundingBox"]
+	epsg = json.loads(meta_path.read_text())["epsg"]
+
+	with tempfile.TemporaryDirectory() as tmp:
+		tmp_path = Path(tmp)
+		shp_path = None
+		has_prj = False
+		for f in files:
+			dest = tmp_path / f.filename
+			with open(dest, "wb") as out:
+				shutil.copyfileobj(f.file, out)
+			if dest.suffix.lower() == ".shp":
+				shp_path = dest
+			elif dest.suffix.lower() == ".prj":
+				has_prj = True
+
+		if shp_path is None:
+			raise HTTPException(400, "No .shp file found - select the .shp together with its "
+				".shx/.dbf/.prj sibling files.")
+
+		overlay_id = sanitize_name(shp_path.stem)
+		out_path = out_dir / "overlays" / f"{overlay_id}.shp"
+
+		# some layers in real HD map exports are missing their .prj (seen in practice) -
+		# without one, ogr2ogr has no source CRS to reproject from. Assume WGS84 lon/lat,
+		# the common case for these exports (matches this tool's other, .prj-having layers).
+		source_srs = None if has_prj else "EPSG:4326"
+
+		try:
+			stats = drape_shapefile(
+				str(shp_path), str(ground_proxy_path), epsg,
+				(bbox["min"][0], bbox["min"][1], bbox["max"][0], bbox["max"][1]),
+				str(out_path), source_srs=source_srs,
+			)
+		except subprocess.CalledProcessError as e:
+			raise HTTPException(500, f"Draping failed: {e.stderr}")
+		except Exception as e:
+			logger.exception("drape-shp failed for dataset=%s file=%s", dataset, shp_path.name)
+			raise HTTPException(500, f"Draping failed: {e}")
+
+	if stats["features_in"] == 0:
+		raise HTTPException(400, "This shapefile has no features overlapping this point cloud's extent.")
+
+	response = {
+		"url": f"/pointclouds/{dataset}/overlays/{overlay_id}.shp",
+		**stats,
+	}
+	if not has_prj:
+		response["warning"] = "No .prj found - assumed WGS84 (EPSG:4326) source CRS."
+
+	return JSONResponse(response)
 
 
 @app.post("/api/export-shp")

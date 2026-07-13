@@ -368,10 +368,12 @@ export class Sidebar{
 						material.size = 1;
 						material.pointSizeType = Potree.PointSizeType.ADAPTIVE;
 						material.shape = Potree.PointShape.SQUARE;
-						material.activeAttributeName = "rgba";
+						material.activeAttributeName = "intensity gradient";
 
 						this.viewer.scene.addPointCloud(pointcloud);
 						this.viewer.fitToScreen();
+
+						window.lastPotreeDatasetId = dataset;
 					}catch(err){
 						this.viewer.postError(`${file.name}: ${err.message}`);
 					}finally{
@@ -381,6 +383,92 @@ export class Sidebar{
 
 				inputImport.prop("disabled", false);
 				inputImport.val("");
+			});
+		}
+
+		{
+			let elImportSHP = elScene.next().find("#scene_import_shp");
+			let inputImportSHP = elImportSHP.find("input[type=file]");
+			let zOffsetSlider = elImportSHP.find("#shp_z_offset_slider");
+			let zOffsetValue = elImportSHP.find("#shp_z_offset_value");
+			let shpOverlayNodes = [];
+
+			zOffsetSlider.on("input", () => {
+				const offset = parseFloat(zOffsetSlider.val());
+				zOffsetValue.text(offset.toFixed(2));
+				for(const node of shpOverlayNodes){
+					node.position.z = offset;
+				}
+			});
+
+			inputImportSHP.change(async (event) => {
+				const files = Array.from(event.target.files);
+				if(files.length === 0){
+					return;
+				}
+
+				const dataset = window.lastPotreeDatasetId;
+				if(!dataset){
+					this.viewer.postError("Import a LAS/LAZ first - the SHP overlay drapes onto its ground height.");
+					inputImportSHP.val("");
+					return;
+				}
+
+				const extensions = files.map(f => f.name.toLowerCase().split(".").pop());
+				// .prj is nice to have but some real-world exports omit it (server assumes
+				// WGS84 as a fallback) - only .shp/.shx/.dbf are hard requirements
+				const missing = ["shp", "shx", "dbf"].filter(ext => !extensions.includes(ext));
+				if(missing.length > 0){
+					this.viewer.postError(`Missing .${missing.join(", .")} - select all sidecar files together (ctrl/shift-click).`);
+					inputImportSHP.val("");
+					return;
+				}
+				if(!extensions.includes("prj")){
+					this.viewer.postMessage("No .prj selected - assuming WGS84 source coordinates.", {duration: 4000});
+				}
+
+				inputImportSHP.prop("disabled", true);
+				let message = this.viewer.postMessage(`Draping SHP overlay onto ${dataset}...`);
+
+				try{
+					const formData = new FormData();
+					formData.append('dataset', dataset);
+					for(const file of files){
+						formData.append('files', file);
+					}
+
+					const response = await fetch('/api/drape-shp', {method: 'POST', body: formData});
+					const data = await response.json();
+
+					if(!response.ok){
+						throw new Error(data.detail || 'Failed to drape SHP overlay.');
+					}
+
+					const loader = new Potree.ShapefileLoader();
+					// already reprojected + draped onto real ground height server-side (webapp/drape_shp.py)
+					loader.transform = null;
+
+					const shp = await loader.load(data.url);
+					shp.node.position.z = parseFloat(zOffsetSlider.val());
+					this.viewer.scene.scene.add(shp.node);
+					shpOverlayNodes.push(shp.node);
+
+					this.viewer.addEventListener("update", () => {
+						const size = this.viewer.renderer.getSize(new THREE.Vector2());
+						shp.setResolution(size.width, size.height);
+					});
+
+					const skippedNote = data.vertices_no_ground > 0
+						? ` (${data.vertices_no_ground} vertices outside LAS coverage, flattened)`
+						: "";
+					this.viewer.postMessage(`Draped ${data.features_in} SHP features onto ${dataset}${skippedNote}.`);
+				}catch(err){
+					this.viewer.postError(`SHP overlay: ${err.message}`);
+				}finally{
+					message.element.remove();
+					inputImportSHP.prop("disabled", false);
+					inputImportSHP.val("");
+				}
 			});
 		}
 

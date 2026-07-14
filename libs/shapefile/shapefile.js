@@ -28,7 +28,7 @@ ArraySource.prototype.read = array_read;
 ArraySource.prototype.cancel = array_cancel;
 
 var fetchPath = function(url) {
-  return fetch(url).then(function(response) {
+  return fetch(url, {cache: "no-cache"}).then(function(response) {
     return response.body && response.body.getReader
         ? response.body.getReader()
         : response.arrayBuffer().then(array);

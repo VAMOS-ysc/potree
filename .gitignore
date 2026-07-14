@@ -44,3 +44,10 @@ __pycache__/
 
 # private HD map data copied in for local SHP overlay testing - not example data
 /webapp/hdmap/
+
+# Cylinder3D training data/checkpoints/run logs - regeneratable from source
+# LAS+SHP or too large for git (data/ ~1.8G, work_dirs/ ~5.7G); transfer via
+# rsync/scp when moving training to another machine instead
+/training/data/
+/training/work_dirs/
+/training/logs/

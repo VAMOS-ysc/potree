@@ -1,0 +1,145 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+	<meta charset="utf-8">
+	<title>Cylinder3D prediction test</title>
+
+	<link rel="stylesheet" type="text/css" href="../build/potree/potree.css">
+	<link rel="stylesheet" type="text/css" href="../libs/jquery-ui/jquery-ui.min.css">
+	<link rel="stylesheet" type="text/css" href="../libs/openlayers3/ol.css">
+	<link rel="stylesheet" type="text/css" href="../libs/spectrum/spectrum.css">
+	<link rel="stylesheet" type="text/css" href="../libs/jstree/themes/mixed/style.css">
+</head>
+
+<body>
+	<script src="../libs/jquery/jquery-3.1.1.min.js"></script>
+	<script src="../libs/spectrum/spectrum.js"></script>
+	<script src="../libs/jquery-ui/jquery-ui.min.js"></script>
+	<script src="../libs/other/BinaryHeap.js"></script>
+	<script src="../libs/tween/tween.min.js"></script>
+	<script src="../libs/d3/d3.js"></script>
+	<script src="../libs/proj4/proj4.js"></script>
+	<script src="../libs/openlayers3/ol.js"></script>
+	<script src="../libs/i18next/i18next.js"></script>
+	<script src="../libs/jstree/jstree.js"></script>
+	<script src="../build/potree/potree.js"></script>
+	<script src="../libs/plasio/js/laslaz.js"></script>
+
+	<div class="potree_container" style="position: absolute; width: 100%; height: 100%; left: 0px; top: 0px; ">
+		<div id="potree_render_area" style="background-image: url('../build/potree/resources/images/background.jpg');"></div>
+		<div id="potree_sidebar_container"> </div>
+	</div>
+
+	<div id="debug_panel" style="position: absolute; bottom: 0; left: 0; z-index: 1000; background: rgba(0,0,0,0.8); color: lime; font-family: monospace; font-size: 14px; padding: 8px; max-width: 100%; white-space: pre-wrap;"></div>
+
+	<script type="module">
+
+		import * as THREE from "../libs/three.js/build/three.module.js";
+
+		const debugPanel = document.getElementById("debug_panel");
+		const debugLog = (msg) => { debugPanel.textContent += msg + "\n"; console.log(msg); };
+		window.addEventListener("error", (e) => debugLog("ERROR: " + e.message));
+
+		// usage: test_predictions.html?dataset=<id>&predictions=<url to geojson>
+		const params = new URLSearchParams(window.location.search);
+		const dataset = params.get("dataset");
+		const predictionsUrl = params.get("predictions");
+
+		const datasetPath = `/pointclouds/${dataset}`;
+		const meta = await (await fetch(`${datasetPath}/potree_meta.json`)).json();
+		proj4.defs(meta.epsg, meta.proj4);
+
+		window.viewer = new Potree.Viewer(document.getElementById("potree_render_area"));
+		viewer.setEDLEnabled(!params.get("noedl"));
+		viewer.setFOV(60);
+		viewer.setPointBudget(3_000_000);
+		viewer.setBackground("gradient");
+		viewer.setDescription(`${meta.sourceFile} - Cylinder3D predictions`);
+
+		viewer.loadGUI(() => {
+			viewer.setLanguage('en');
+			$("#menu_tools").next().show();
+			$("#menu_scene").next().show();
+			viewer.toggleSidebar();
+		});
+
+		const {pointcloud} = await Potree.loadPointCloud(`${datasetPath}/metadata.json`, dataset);
+		let material = pointcloud.material;
+		material.size = 1;
+		material.pointSizeType = Potree.PointSizeType.ADAPTIVE;
+		material.shape = Potree.PointShape.SQUARE;
+		material.activeAttributeName = "intensity gradient";
+		if (!params.get("nopc")) {
+			viewer.scene.addPointCloud(pointcloud);
+		}
+		viewer.fitToScreen();
+
+		if (predictionsUrl) {
+			debugLog("loading predictions: " + predictionsUrl);
+			const geojson = await (await fetch(predictionsUrl)).json();
+
+			const byClass = {lane: [], crosswalk: []};
+			for (const f of geojson.features) {
+				const cls = f.properties.class;
+				if (byClass[cls]) byClass[cls].push(f.geometry.coordinates);
+			}
+			debugLog(`lane points: ${byClass.lane.length}, crosswalk points: ${byClass.crosswalk.length}`);
+
+			// small canvas-drawn circular dot, reused from the same approach as
+			// ShapefileLoader's Point marker fix (screen-space constant size)
+			const dotTexture = (() => {
+				const size = 64;
+				const canvas = document.createElement("canvas");
+				canvas.width = size; canvas.height = size;
+				const ctx = canvas.getContext("2d");
+				ctx.beginPath();
+				ctx.arc(size / 2, size / 2, size / 2 - 2, 0, 2 * Math.PI);
+				ctx.fillStyle = "white";
+				ctx.fill();
+				return new THREE.CanvasTexture(canvas);
+			})();
+
+			// raw UTM coordinates (~3.2e5, 4.1e6) blow float32 precision once they hit
+			// the model-view-projection matrix chain in the vertex shader - points
+			// render unstably or vanish. Fix: store small LOCAL vertex values (offset
+			// subtracted out) and carry the large offset on the Points object's own
+			// .position instead, exactly like the octree loader already does for the
+			// point cloud itself (see pointcloud.position, logged above).
+			const offset = pointcloud.position;
+			const colors = {lane: 0xff2020, crosswalk: 0x2090ff};
+			for (const [cls, coords] of Object.entries(byClass)) {
+				if (coords.length === 0) continue;
+				const positions = new Float32Array(coords.length * 3);
+				for (let i = 0; i < coords.length; i++) {
+					positions[i * 3 + 0] = coords[i][0] - offset.x;
+					positions[i * 3 + 1] = coords[i][1] - offset.y;
+					positions[i * 3 + 2] = coords[i][2] - offset.z;
+				}
+				const geometry = new THREE.BufferGeometry();
+				geometry.setAttribute("position", new THREE.BufferAttribute(positions, 3));
+				// NOTE: depthTest:false here gets hidden/washed out under EDL
+				// (same interaction seen with ShapefileLoader's Point markers
+				// earlier) - use ?noedl=1 to see these clearly, or switch to
+				// depthTest:true for production use alongside EDL.
+				const mat = new THREE.PointsMaterial({
+					color: colors[cls],
+					size: 5,
+					sizeAttenuation: false,
+					map: dotTexture,
+					alphaTest: 0.5,
+					depthTest: false,
+				});
+				const points = new THREE.Points(geometry, mat);
+				points.position.copy(offset);
+				points.renderOrder = 10;
+				viewer.scene.scene.add(points);
+			}
+
+			debugLog("predictions rendered");
+		}
+
+	</script>
+
+
+  </body>
+</html>

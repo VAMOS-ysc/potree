@@ -10,6 +10,9 @@ Upload a LAS/LAZ file → it's automatically ground-classified (PDAL `filters.sm
 converted to a streamable point cloud (PotreeConverter) → digitize lane lines directly on
 the point cloud with the "Lane" tool → export as a georeferenced Shapefile.
 
+Setting this up on a new machine? See [`SETUP.md`](SETUP.md) for the full checklist
+(system packages, Python/conda, and the raw data that isn't tracked in git).
+
 ## Prerequisites
 
 * [Node.js](https://nodejs.org/) + npm
@@ -19,6 +22,9 @@ the point cloud with the "Lane" tool → export as a georeferenced Shapefile.
   * [GDAL](https://gdal.org/) / `ogr2ogr` on PATH — used for the Shapefile export
 * Linux x86_64: the bundled `PotreeConverter/PotreeConverter` binary works out of the box.
   Windows/Mac: replace it with a build from [potree/PotreeConverter](https://github.com/potree/PotreeConverter).
+* `electron/main.js` launches the backend via plain `spawn('python3', ...)`, so whichever
+  Python environment has the packages above must be active (e.g. `conda activate ...`) in
+  the *same terminal* you run `npm run desktop` from.
 
 ## Setup & Run
 
@@ -34,6 +40,13 @@ Scene panel's export row to download a Shapefile.
 
 If you'd rather run it as a plain web app instead of the Electron window, `python
 webapp/server.py` starts just the backend; visit `http://localhost:8080/upload`.
+
+## Lane3D Training (Cylinder3D)
+
+A separate pipeline trains a Cylinder3D point-cloud segmentation model (background/
+lane/crosswalk) to auto-detect lane markings and crosswalks from raw LiDAR + HD map
+ground truth, as an alternative to manual digitizing. See
+[`training/README.md`](training/README.md) for environment setup and usage.
 
 ---
 

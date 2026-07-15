@@ -7,15 +7,18 @@ point labeling.
 
 Class scheme: 0=background(other ground), 1=lane, 2=crosswalk
 
-HD map Kind-code semantics are not documented anywhere in the source data - they
-were reverse-engineered by cross-referencing SHP feature IDs against an OpenDRIVE
-export (AYG_DNA_PCN.xml) that carries explicit type="crosswalk"/"stopline" tags for
-a subset of features:
-  - B2_SURFACELINEMARK Kind=530 -> stopline (578/578 confirmed cases) - excluded from
-    the lane class, since a stop line isn't a lane marking
-  - B3_SURFACEMARK Kind=5321 -> crosswalk (475/475 confirmed cases) - the only Kind
-    used for the crosswalk class; other B3 Kind values have no confirmed meaning and
-    are left unlabeled (background) rather than guessed
+HD map Kind-code semantics come from 정밀도로지도 제작 매뉴얼(2020.12) table 9.52
+(B2_SURFACELINEMARK) and table 9.56 (B3_SURFACEMARK):
+  - B2_SURFACELINEMARK: Kind in LANE_KIND_CODES (below) -> lane. Covers every Kind
+    value listed in table 9.52, including ones that aren't lane boundaries in the
+    strict sense (531 안전지대 safety zone, 535 자전거도로 bike lane, 599 기타선
+    undefined other line) - any Kind value not in the table falls through to
+    background rather than being guessed.
+  - B3_SURFACEMARK Kind=5321 -> crosswalk (only the confirmed crosswalk code, per
+    table 9.56 / cross-referenced against an OpenDRIVE export AYG_DNA_PCN.xml with
+    explicit type="crosswalk" tags, 475/475 confirmed cases); other B3 Kind values
+    have no confirmed meaning here and are left unlabeled (background) rather than
+    guessed
 
 Usage:
     python3 training/prepare_dataset.py <raw_las> <hdmap_dir> <out_dir> [--tile-size 30]
@@ -37,6 +40,24 @@ from shapely.ops import unary_union
 CLASS_BACKGROUND = 0
 CLASS_LANE = 1
 CLASS_CROSSWALK = 2
+
+# B2_SURFACELINEMARK Kind (선규제 유형) codes treated as lane markings - the full
+# code list from 정밀도로지도 제작 매뉴얼(2020.12) table 9.52.
+LANE_KIND_CODES = {
+    "501",   # 중앙선 (center line)
+    "5011",  # 가변차선 (variable/reversible lane center line)
+    "502",   # 유턴구역선 (U-turn zone line)
+    "503",   # 차선 (lane boundary)
+    "504",   # 버스전용차선 (bus-only lane boundary)
+    "505",   # 길가장자리구역선 (edge/shoulder line)
+    "506",   # 진로변경제한선 (lane-change restriction line)
+    "515",   # 주정차금지선 (no parking/stopping line)
+    "525",   # 유도선 (guide line at IC/JC/intersections)
+    "530",   # 정지선 (stop line)
+    "531",   # 안전지대 (safety zone)
+    "535",   # 자전거도로 (bicycle lane)
+    "599",   # 기타선 (undefined other regulatory line)
+}
 
 LANE_BUFFER_M = 0.15   # half-width around the digitized lane centerline
 RASTER_CELL_M = 0.05   # label raster resolution
@@ -128,7 +149,7 @@ def load_hdmap_shapes(hdmap_dir: str, target_epsg: str, bbox):
 
     lane_geoms = []
     for f in b2["features"]:
-        if f["properties"].get("Kind") == "530":  # stopline, not a lane marking
+        if f["properties"].get("Kind") not in LANE_KIND_CODES:
             continue
         geom = shape(f["geometry"])
         if not geom.is_empty:

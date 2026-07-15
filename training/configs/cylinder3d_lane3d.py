@@ -10,13 +10,27 @@
 #   - no LaserMix/PolarMix (those mix between two full scans; skipped for this
 #     first end-to-end validation run - the base flip/rotate/scale augmentation
 #     from the stock config is kept)
-_base_ = [
-    '/home/ysc/miniconda3/envs/lane3d/lib/python3.10/site-packages/mmdet3d/.mim/configs/_base_/default_runtime.py',
-]
 # registers Lane3DDataset (see ../lane3d_dataset.py) - SemanticKittiDataset's
 # METAINFO hardcodes the 19 stock KITTI class names, so our classes need a
 # subclass with its own METAINFO rather than reusing SemanticKittiDataset as-is
 custom_imports = dict(imports=['lane3d_dataset'], allow_failed_imports=False)
+
+# Inlined from mmdet3d's _base_/default_runtime.py instead of using mmengine's
+# `_base_` inheritance - mmengine statically AST-parses `_base_` (it can't be a
+# computed path, which is what broke here when this pointed at one machine's
+# conda env path via `import mmdet3d; osp.dirname(mmdet3d.__file__)`), and
+# `_base_` itself must be plain string literals, so there's no way to make it
+# portable across machines/envs other than not using it for this file.
+default_scope = 'mmdet3d'
+env_cfg = dict(
+    cudnn_benchmark=False,
+    mp_cfg=dict(mp_start_method='fork', opencv_num_threads=0),
+    dist_cfg=dict(backend='nccl'),
+)
+log_processor = dict(type='LogProcessor', window_size=50, by_epoch=True)
+log_level = 'INFO'
+load_from = None
+resume = False
 
 class_names = ('background', 'lane', 'crosswalk')
 num_classes = len(class_names)
@@ -69,8 +83,12 @@ model = dict(
 )
 
 # ---- dataset ----
+# relative to repo root - mmengine configs don't have `__file__`, and `_base_`
+# path computation isn't available either (see note above), so this assumes
+# `mim train`/etc. are invoked from the repo root, same as documented in
+# ../README.md
 dataset_type = 'Lane3DDataset'
-data_root = '/home/ysc/potree/training/data/lane3d'
+data_root = 'training/data/lane3d'
 
 metainfo = dict(
     classes=class_names,
@@ -119,7 +137,11 @@ test_pipeline = [
 ]
 
 train_dataloader = dict(
-    batch_size=4,
+    # 4 OOM'd on this 10GB card - the desktop session (Xorg/gnome-shell/VSCode/
+    # browser) already holds ~1GB, leaving only ~9.64GB for training, and the
+    # backbone's early sparse-conv layers alone need most of that at batch 4.
+    # 2 is confirmed to fit (see smoke test in this session).
+    batch_size=2,
     num_workers=4,
     persistent_workers=True,
     sampler=dict(type='DefaultSampler', shuffle=True),
@@ -168,5 +190,11 @@ param_scheduler = [
     dict(type='MultiStepLR', begin=0, end=30, by_epoch=True, milestones=[20, 26], gamma=0.1),
 ]
 
-default_hooks = dict(checkpoint=dict(type='CheckpointHook', interval=3, max_keep_ckpts=5))
-work_dir = '/home/ysc/potree/training/work_dirs/cylinder3d_lane3d_full'
+default_hooks = dict(
+    timer=dict(type='IterTimerHook'),
+    logger=dict(type='LoggerHook', interval=50),
+    param_scheduler=dict(type='ParamSchedulerHook'),
+    checkpoint=dict(type='CheckpointHook', interval=3, max_keep_ckpts=5),
+    sampler_seed=dict(type='DistSamplerSeedHook'),
+    visualization=dict(type='Det3DVisualizationHook'))
+work_dir = 'training/work_dirs/cylinder3d_lane3d_full'

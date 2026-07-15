@@ -1,0 +1,19 @@
+# Data-prep + info-pkl stage deps (prepare_dataset.py, make_info_pkl.py).
+# Install inside the `lane3d` conda env (see ../README.md) with:
+#   pip install -r training/requirements.txt
+#
+# pdal is deliberately NOT listed here: pip's pdal sdist (2.3.x-3.5.x) has a
+# packaging bug where its setup.py only looks for CMakeLists.txt at the sdist
+# root, but it actually ships under pdal/CMakeLists.txt - the build silently
+# "succeeds" with a pure-Python package missing the compiled libpdalpython
+# extension (ImportError on `from pdal import libpdalpython`). Install it from
+# conda-forge instead, which ships a working prebuilt binary:
+#   conda install -c conda-forge pdal python-pdal gdal
+
+rasterio
+shapely
+affine
+numpy
+scipy
+scikit-image
+mmengine

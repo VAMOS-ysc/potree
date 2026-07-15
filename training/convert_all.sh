@@ -1,15 +1,35 @@
 #!/bin/bash
+# Converts every *.las file in LAS_DIR into SemanticKITTI-format training tiles.
+# Skips files already converted (marked by a .done_<source_id> file in OUT_DIR),
+# so re-running after a crash/OOM only retries what's left - this replaces the
+# old convert_remaining.sh hardcoded retry list.
 set -uo pipefail
-cd /home/ysc/potree
-FILES="02-003 03-005 03-extra 04 05-004 06-005 07-004 08-001 09-002 10-003 17-004 18-003 19-002 28"
-LOG=/home/ysc/potree/training/logs/convert_all.log
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+LAS_DIR="${1:-$HOME/다운로드}"
+HDMAP_DIR="${2:-$HOME/ayg-dna-pcn}"
+OUT_DIR="${3:-$SCRIPT_DIR/training/data/lane3d}"
+
+cd "$SCRIPT_DIR"
+mkdir -p "$OUT_DIR" training/logs
+LOG="training/logs/convert_all.log"
 : > "$LOG"
 
-for f in $FILES; do
-  echo "[$(date +%H:%M:%S)] === starting $f ===" | tee -a "$LOG"
-  python3 training/prepare_dataset.py "/home/ysc/다운로드/${f}.las" /home/ysc/Armstrong/ayg-dna-pcn training/data/lane3d --tile-size 30 --source-id "$f" >> "$LOG" 2>&1
+shopt -s nullglob
+for las in "$LAS_DIR"/*.las; do
+  source_id="$(basename "$las" .las)"
+  done_marker="$OUT_DIR/.done_${source_id}"
+
+  if [ -f "$done_marker" ]; then
+    echo "[$(date +%H:%M:%S)] === skipping $source_id (already converted) ===" | tee -a "$LOG"
+    continue
+  fi
+
+  echo "[$(date +%H:%M:%S)] === starting $source_id === (mem free: $(LC_ALL=C free -h | awk '/Mem:/{print $7}'))" | tee -a "$LOG"
+  python3 training/prepare_dataset.py "$las" "$HDMAP_DIR" "$OUT_DIR" --tile-size 30 --source-id "$source_id" >> "$LOG" 2>&1
   status=$?
-  echo "[$(date +%H:%M:%S)] === $f done, exit=$status ===" | tee -a "$LOG"
+  echo "[$(date +%H:%M:%S)] === $source_id done, exit=$status ===" | tee -a "$LOG"
+  [ "$status" -eq 0 ] && touch "$done_marker"
 done
 
 echo "ALL_CONVERT_DONE" | tee -a "$LOG"

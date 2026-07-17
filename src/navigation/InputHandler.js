@@ -328,7 +328,8 @@ export class InputHandler extends EventDispatcher {
 				hovered.dispatchEvent({
 					type: 'mouseup',
 					viewer: this.viewer,
-					consume: consume
+					consume: consume,
+					button: e.button
 				});
 			}
 		}
@@ -673,7 +674,11 @@ export class InputHandler extends EventDispatcher {
 		
 		let raycaster = new THREE.Raycaster();
 		raycaster.ray.set(ray.origin, ray.direction);
+		// LineSegments2.raycast() (fat lines, e.g. Measure edges) needs the camera to
+		// project the line's screen-space width, and reads params.Line2 (not params.Line).
+		raycaster.camera = camera;
 		raycaster.params.Line.threshold = 0.2;
+		raycaster.params.Line2 = {threshold: 8}; // generous - edges render 2px wide, a tight threshold makes clicking a line unreliable
 
 		let intersections = raycaster.intersectObjects(interactables.filter(o => o.visible), false);
 

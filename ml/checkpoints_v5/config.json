@@ -1,0 +1,11 @@
+{
+  "class_names": {
+    "0": "background",
+    "1": "line_marking",
+    "2": "crosswalk",
+    "3": "other"
+  },
+  "patch_size": 256,
+  "base_channels": 32,
+  "in_channels": 2
+}

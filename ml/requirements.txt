@@ -1,0 +1,25 @@
+# Lane/crosswalk segmentation pipeline (ml/).
+# Install with: pip install -r ml/requirements.txt
+#
+# PDAL and GDAL are NOT here - they're native CLI tools (rasterize.py shells out
+# to `pdal` and `gdal_rasterize`/`gdalinfo`), not pip packages. Install them via
+# your system package manager / conda (see README Prerequisites) - the webapp
+# already depends on them, so if the Lane Digitize Tool works, these are present.
+numpy>=1.26
+tifffile>=2024.1.1
+Pillow>=10
+scipy>=1.11
+
+# vectorize_predictions.py only (turns a predicted class raster into clean
+# LineString/Polygon GeoJSON instead of a point splatter) - not needed for
+# rasterize.py/train.py/infer.py, kept optional since they're heavier deps.
+rasterio>=1.3
+shapely>=2.0
+scikit-image>=0.20
+affine>=2.4
+
+# train.py (U-Net). `pip install torch` pulls a CUDA-enabled build automatically
+# on Linux/Windows if you have a recent NVIDIA driver - if it lands on a CPU-only
+# build instead, or you're on a different platform, use the selector at
+# https://pytorch.org/get-started/locally/ to pick the right command for you.
+torch>=2.0

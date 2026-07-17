@@ -119,6 +119,7 @@ function createMeasurementData(measurement){
 		isLane: measurement.isLane,
 		laneType: measurement.laneType,
 		laneColor: measurement.laneColor,
+		isCrosswalk: measurement.isCrosswalk,
 	};
 
 	return data;

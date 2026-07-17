@@ -38,6 +38,18 @@ pointclouds/F
 /pointclouds/*_[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]_[0-9][0-9][0-9][0-9][0-9][0-9]/
 /pointclouds/28_converted/
 /pointclouds/28_ground_converted/
+/pointclouds/32_1cm_2/
+
+# reference document, not source
+/정밀도로지도 제작 매뉴얼(2020.12).pdf
 
 __pycache__/
 *.pyc
+
+# ml/rasterize.py output (rasters/masks derived from LAS+SHP, regenerable, large)
+# and any trained model weights - not source, shouldn't be committed
+/ml/out/
+*.tif
+*.pt
+*.pth
+*.onnx

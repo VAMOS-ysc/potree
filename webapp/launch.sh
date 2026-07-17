@@ -6,6 +6,8 @@
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 PYTHON_BIN="python3"
 PORT=8080
+# Opens straight into the (initially empty) viewer - its sidebar's Scene >
+# Import panel uploads a LAS/LAZ and adds it to the running scene directly.
 URL="http://localhost:${PORT}/examples/lane_digitize.html"
 LOG_FILE="/tmp/lane_digitize_server.log"
 

@@ -555,6 +555,54 @@ export class Utils {
 		return ray;
 	}
 
+	static worldToScreen(point, camera, width, height){
+		let ndc = point.clone().project(camera);
+
+		return new THREE.Vector2(
+			(ndc.x + 1) * width / 2,
+			(-ndc.y + 1) * height / 2
+		);
+	}
+
+	// Finds the closest existing measurement vertex (in any measurement in the scene,
+	// including this one) to `worldPoint`, in screen-space pixels rather than world
+	// distance - a fixed world threshold would grab the wrong vertex when zoomed out
+	// and never trigger when zoomed in, while a pixel threshold tracks how close the
+	// vertex looks on screen regardless of zoom. 15px matches the fixed on-screen
+	// vertex sphere radius set in MeasuringTool.update(), so snapping kicks in right
+	// as the cursor visually touches a vertex. Used so lines meeting at an
+	// intersection can share exact coordinates instead of being off by a few cm.
+	static snapToNearbyVertex(worldPoint, viewer, {excludeMeasure = null, excludeIndex = null, pixelThreshold = 15} = {}){
+		let camera = viewer.scene.getActiveCamera();
+		let domElement = viewer.renderer.domElement;
+		let width = domElement.clientWidth;
+		let height = domElement.clientHeight;
+
+		let cursorScreen = Utils.worldToScreen(worldPoint, camera, width, height);
+
+		let closest = null;
+		let closestDist = Infinity;
+
+		for(let measure of viewer.scene.measurements){
+			for(let i = 0; i < measure.points.length; i++){
+				if(measure === excludeMeasure && i === excludeIndex){
+					continue;
+				}
+
+				let candidate = measure.points[i].position;
+				let candidateScreen = Utils.worldToScreen(candidate, camera, width, height);
+				let dist = cursorScreen.distanceTo(candidateScreen);
+
+				if(dist < pixelThreshold && dist < closestDist){
+					closestDist = dist;
+					closest = candidate.clone();
+				}
+			}
+		}
+
+		return closest;
+	}
+
 	static projectedRadius(radius, camera, distance, screenWidth, screenHeight){
 		if(camera instanceof THREE.OrthographicCamera){
 			return Utils.projectedRadiusOrtho(radius, camera.projectionMatrix, screenWidth, screenHeight);

@@ -14,9 +14,9 @@ the point cloud with the "Lane" tool → export as a georeferenced Shapefile.
 
 * [Node.js](https://nodejs.org/) + npm
 * Python 3.9+ with:
-  * `pip install fastapi uvicorn python-multipart`
+  * `pip install -r webapp/requirements.txt`
   * [PDAL](https://pdal.io/) (e.g. `conda install -c conda-forge pdal` or your distro's package manager) — used for ground classification and reading LAS coordinate system metadata
-  * [GDAL](https://gdal.org/) / `ogr2ogr` on PATH — used for the Shapefile export
+  * [GDAL](https://gdal.org/) CLI tools (`ogr2ogr`, `gdal_rasterize`, `gdalsrsinfo`, `gdal_create`) on PATH — used for the Shapefile export and the `ml/` data prep scripts
 * Linux x86_64: the bundled `PotreeConverter/PotreeConverter` binary works out of the box.
   Windows/Mac: replace it with a build from [potree/PotreeConverter](https://github.com/potree/PotreeConverter).
 
@@ -27,13 +27,80 @@ npm install        # installs gulp/rollup build tooling + electron, and builds p
 npm run desktop     # starts the backend and opens the app window
 ```
 
-The app opens on an upload screen. Pick a `.las`/`.laz` file, wait for processing, then
-use the "Lane" toolbar icon to click along lane markings. Select a drawn lane in the Scene
-panel to tag its type (solid/dashed/stop line) and color. Use the "SHP" button in the
-Scene panel's export row to download a Shapefile.
+The app opens on an empty viewer. Use the Scene panel's Import button to pick a `.las`/`.laz`
+file, wait for processing, then use the "Lane" toolbar icon to click along lane markings.
+Select a drawn lane in the Scene panel to tag its type (solid/dashed/stop line) and color.
+Use the "SHP" button in the Scene panel's export row to download a Shapefile.
 
 If you'd rather run it as a plain web app instead of the Electron window, `python
 webapp/server.py` starts just the backend; visit `http://localhost:8080/upload`.
+
+## Lane/Crosswalk Segmentation Data Prep (`ml/`)
+
+`ml/rasterize.py` converts a LAS/LAZ scan plus 정밀도로지도-format Shapefiles
+(`B2_SURFACELINEMARK` for lane/stop lines, `B3_SURFACEMARK` for crosswalks) into
+pixel-aligned GeoTIFF rasters — an (intensity + height) input image and a class-id
+mask — for training a segmentation model (e.g. U-Net). It's a standalone
+preprocessing step; it doesn't touch the viewer or webapp.
+
+```bash
+pip install -r ml/requirements.txt   # PDAL/GDAL CLI tools are shared with the webapp, see Prerequisites above
+
+python ml/rasterize.py \
+  --las path/to/scan.las \
+  --lines path/to/B2_SURFACELINEMARK.shp \
+  --crosswalks path/to/B3_SURFACEMARK.shp \
+  --out ml/out/scan \
+  --resolution 0.05 \
+  --preview
+```
+
+Outputs `intensity.tif`, `height.tif`, `mask.tif` (0=background, 1=lane_line,
+2=stop_line, 3=crosswalk, 4=other — see `CLASS_NAMES` in the script), and
+`meta.json` recording the bounds/resolution/EPSG/class mapping used. The
+Kind→class mapping is based on the 정밀도로지도 제작 매뉴얼(2020.12) 9.3.7–9.3.8
+code tables and can be overridden with `--class-map some.json`.
+
+Any of `--las`, `--lines`, `--crosswalks` may be omitted (e.g. rasterize just a
+mask from Shapefiles, or just an intensity/height raster from a LAS file); the
+output region defaults to the union of whichever inputs are given, or override
+with `--bounds XMIN YMIN XMAX YMAX`.
+
+If the Shapefile's CRS differs from the LAS (common - 정밀도로지도 deliverables are
+often lon/lat EPSG:4326, sometimes without even a `.prj` to say so), it's
+reprojected to the LAS's CRS automatically; see `--epsg`/`--shp-srs` for the SHP
+layers that have no `.prj` at all.
+
+### Training (`ml/train.py`)
+
+Trains a U-Net on however many `ml/rasterize.py` output directories ("scenes")
+you point it at, patch-tiling each one and splitting train/val **by scene** (not
+by patch) so validation isn't leaking adjacent-patch context from the same road.
+
+```bash
+# rasterize a few scenes first, e.g.:
+#   python ml/rasterize.py --las d1.las --lines B2....shp --crosswalks B3....shp --out ml/out/scene1 --resolution 0.05
+#   python ml/rasterize.py --las d2.las --lines B2....shp --crosswalks B3....shp --out ml/out/scene2 --resolution 0.05
+#   ...
+
+python ml/train.py \
+  --data-root ml/out \
+  --val-scenes scene2 \
+  --patch-size 256 --batch-size 8 --epochs 30 \
+  --out ml/checkpoints
+```
+
+Handles the severe class imbalance (background is 98%+ of pixels) with inverse-frequency
+class weights + Dice loss, and excludes pixels with no LiDAR return at all from the loss
+(rather than training them as "background"). Saves `last.pt`/`best.pt` (by val mIoU),
+`history.json`, and `config.json` to `--out`. With only one scene rasterized, it falls
+back to a random patch-level split with a warning instead of erroring — fine for a
+smoke test, not for a real accuracy number.
+
+GPU note: if you're power-limited (e.g. a PSU that can't sustain a GPU's full TDP under
+sustained training load), cap it at the driver level once (`sudo nvidia-smi -pl <watts>`,
+made to persist across reboots with a systemd unit) rather than in this script - the
+driver clocks down to stay under the limit regardless of batch size.
 
 ---
 

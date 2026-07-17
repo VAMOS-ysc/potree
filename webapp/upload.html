@@ -35,6 +35,12 @@
 		button:disabled { background: #555; cursor: not-allowed; }
 		#status { margin-top: 16px; font-size: 13px; color: #ccc; min-height: 20px; }
 		#error { color: #ff6b6b; }
+		#epsgPrompt { display: none; margin-top: 16px; text-align: left; }
+		#epsgPrompt p { font-size: 13px; margin: 0 0 8px; }
+		#epsgPrompt input { width: 100%; box-sizing: border-box; padding: 6px 8px; margin-bottom: 8px;
+			background: #1a1a1a; color: #eee; border: 1px solid #555; border-radius: 4px; }
+		#epsgPrompt button { margin-right: 8px; }
+		#epsgCancel { background: #555; }
 	</style>
 </head>
 <body>
@@ -44,12 +50,52 @@
 		<br>
 		<button id="uploadBtn">업로드 및 처리 시작</button>
 		<div id="status"></div>
+		<div id="epsgPrompt">
+			<p id="epsgPromptText"></p>
+			<input type="text" id="epsgInput" placeholder="예: EPSG:32652">
+			<div>
+				<button id="epsgOk">확인</button>
+				<button id="epsgCancel">건너뛰기</button>
+			</div>
+		</div>
 	</div>
 
 	<script>
 		const fileInput = document.getElementById('fileInput');
 		const uploadBtn = document.getElementById('uploadBtn');
 		const status = document.getElementById('status');
+		const epsgPrompt = document.getElementById('epsgPrompt');
+		const epsgPromptText = document.getElementById('epsgPromptText');
+		const epsgInput = document.getElementById('epsgInput');
+		const epsgOk = document.getElementById('epsgOk');
+		const epsgCancel = document.getElementById('epsgCancel');
+
+		// window.prompt() is not implemented in Electron's BrowserWindow ("prompt()
+		// is and will not be supported") - this inline input + button pair stands
+		// in for it, resolving with the typed EPSG code or null on "건너뛰기".
+		function askForEpsg(fileName) {
+			return new Promise((resolve) => {
+				epsgPromptText.textContent = `${fileName}: 파일에 좌표계(SRS) 정보가 없습니다. EPSG 코드를 입력하세요.`;
+				epsgInput.value = '';
+				epsgPrompt.style.display = 'block';
+				epsgInput.focus();
+
+				const cleanup = (value) => {
+					epsgPrompt.style.display = 'none';
+					epsgOk.removeEventListener('click', onOk);
+					epsgCancel.removeEventListener('click', onCancel);
+					epsgInput.removeEventListener('keydown', onKeydown);
+					resolve(value);
+				};
+				const onOk = () => cleanup(epsgInput.value.trim() || null);
+				const onCancel = () => cleanup(null);
+				const onKeydown = (e) => { if (e.key === 'Enter') onOk(); };
+
+				epsgOk.addEventListener('click', onOk);
+				epsgCancel.addEventListener('click', onCancel);
+				epsgInput.addEventListener('keydown', onKeydown);
+			});
+		}
 
 		uploadBtn.addEventListener('click', async () => {
 			const files = Array.from(fileInput.files);
@@ -70,8 +116,19 @@
 					const formData = new FormData();
 					formData.append('file', file);
 
-					const response = await fetch('/api/process', {method: 'POST', body: formData});
-					const data = await response.json();
+					let response = await fetch('/api/process', {method: 'POST', body: formData});
+					let data = await response.json();
+
+					// 422 = LAS has no embedded coordinate system (SRS) - ask the
+					// user for the EPSG code and retry with it instead of failing.
+					if (response.status === 422) {
+						const epsg = await askForEpsg(file.name);
+						if (!epsg) {
+							throw new Error(`${file.name}: 좌표계를 입력하지 않아 건너뜁니다.`);
+						}
+						response = await fetch(`/api/process?epsg=${encodeURIComponent(epsg)}`, {method: 'POST', body: formData});
+						data = await response.json();
+					}
 
 					if (!response.ok) {
 						throw new Error(`${file.name}: ${data.detail || '처리 중 오류가 발생했습니다.'}`);

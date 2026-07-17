@@ -541,7 +541,7 @@ export class Sidebar{
 
 			this.viewer.inputHandler.deselectAll();
 
-			if(object instanceof Volume){
+			if(object instanceof Volume || object instanceof Measure){
 				this.viewer.inputHandler.toggleSelection(object);
 			}
 

@@ -1,0 +1,8 @@
+# Backend for the Lane Digitize Tool (webapp/server.py).
+# Install with: pip install -r webapp/requirements.txt
+#
+# PDAL and GDAL are NOT here - they're native CLI tools, not pip packages.
+# Install them via your system package manager / conda (see README Prerequisites).
+fastapi>=0.110
+uvicorn>=0.29
+python-multipart>=0.0.9

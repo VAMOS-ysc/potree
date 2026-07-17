@@ -110,6 +110,9 @@ function loadMeasurement(viewer, data){
 		measure.laneColor = data.laneColor;
 		measure.color = new THREE.Color(data.laneColor === 'yellow' ? 0xffdd00 : 0xffffff);
 	}
+	if(data.isCrosswalk){
+		measure.isCrosswalk = data.isCrosswalk;
+	}
 
 	for(const point of data.points){
 		const pos = new THREE.Vector3(...point);

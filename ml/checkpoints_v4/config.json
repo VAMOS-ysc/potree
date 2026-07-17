@@ -1,0 +1,12 @@
+{
+  "class_names": {
+    "0": "background",
+    "1": "lane_line",
+    "2": "stop_line",
+    "3": "crosswalk",
+    "4": "other"
+  },
+  "patch_size": 256,
+  "base_channels": 32,
+  "in_channels": 2
+}

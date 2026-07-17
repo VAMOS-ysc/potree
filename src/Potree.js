@@ -129,11 +129,6 @@ export {scriptPath, resourcePath};
 
 
 export function loadPointCloud(path, name, callback){
-	let loaded = function(e){
-		e.pointcloud.name = name;
-		callback(e);
-	};
-
 	let promise = new Promise( resolve => {
 
 		// load pointcloud
@@ -217,12 +212,15 @@ export function loadPointCloud(path, name, callback){
 			//callback({'type': 'loading_failed'});
 			console.error(new Error(`failed to load point cloud from URL: ${path}`));
 		}
+	}).then(e => {
+		if(e && e.pointcloud){
+			e.pointcloud.name = name;
+		}
+		return e;
 	});
 
 	if(callback){
-		promise.then(pointcloud => {
-			loaded(pointcloud);
-		});
+		promise.then(callback);
 	}else{
 		return promise;
 	}

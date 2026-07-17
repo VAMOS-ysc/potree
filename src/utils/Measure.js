@@ -297,6 +297,7 @@ export class Measure extends THREE.Object3D {
 		this._showHeight = false;
 		this._showEdges = true;
 		this._showAzimuth = false;
+		this._selected = false;
 		this.maxMarkers = Number.MAX_SAFE_INTEGER;
 
 		this.sphereGeometry = new THREE.SphereGeometry(0.4, 10, 10);
@@ -329,6 +330,53 @@ export class Measure extends THREE.Object3D {
 
 		this.add(this.azimuth.node);
 
+		{ // Event Listeners
+			// Mirrors Volume.js's selectable-shape pattern, but unlike Volume's no-ops
+			// these actually flip _selected - insert/delete-vertex listeners (wired per
+			// vertex in _createVertexAt) gate on this.selected, and update() uses it to
+			// draw a highlight (since TransformationTool's own selection frame is
+			// suppressed for Measure - see TransformationTool.js).
+			this.addEventListener('select', e => { this._selected = true; this.update(); });
+			this.addEventListener('deselect', e => { this._selected = false; this.update(); });
+		}
+
+		{ // Backspace deletes whichever vertex the mouse is currently over - works
+		  // regardless of this.selected, since hovering/dragging a point (mouseover,
+		  // already set up per-sphere in _createVertexAt) is a more direct "this is the
+		  // point I mean" signal than requiring the whole line to be select-clicked
+		  // first. _hoveredIndex is maintained by the sphere mouseover/mouseleave
+		  // listeners below.
+			this._hoveredIndex = null;
+			window.addEventListener('keydown', (e) => {
+				if (e.key !== 'Backspace' || this._hoveredIndex === null) return;
+				if (this.points.length <= 2) return;
+				// don't hijack Backspace while the user is typing in an unrelated text
+				// field that just happens to sit under the mouse (e.g. EPSG prompt)
+				let tag = e.target && e.target.tagName;
+				if (tag === 'INPUT' || tag === 'TEXTAREA') return;
+
+				e.preventDefault();
+				let index = this._hoveredIndex;
+				this._hoveredIndex = null;
+				this.removeMarker(index);
+			});
+		}
+	}
+
+	get selected () {
+		return this._selected;
+	}
+
+	// Required so TransformationTool (which unconditionally reads selected.boundingBox
+	// every frame once something is selected) doesn't crash when a Measure is selected.
+	// Recomputed on demand rather than cached - point counts are small (tens of
+	// vertices) and caching would need invalidating on every update() anyway.
+	get boundingBox () {
+		if (this.points.length === 0) {
+			return new THREE.Box3();
+		}
+
+		return new THREE.Box3().setFromPoints(this.points.map(p => p.position));
 	}
 
 	createSphereMaterial () {
@@ -342,21 +390,25 @@ export class Measure extends THREE.Object3D {
 		return sphereMaterial;
 	};
 
-	addMarker (point) {
+	_normalizePoint (point) {
 		if (point.x != null) {
 			point = {position: point};
 		}else if(point instanceof Array){
 			point = {position: new THREE.Vector3(...point)};
 		}
-		this.points.push(point);
 
-		// sphere
+		return point;
+	}
+
+	// Creates one vertex's worth of Object3Ds (sphere/edge/labels) and wires the
+	// sphere's drag/drop/hover listeners. Doesn't touch this.points/spheres/edges/etc
+	// or call this.add(...) - callers (addMarker/insertMarker) own array placement
+	// since append vs. mid-array insert need different splice positions.
+	_createVertexAt () {
 		let sphere = new THREE.Mesh(this.sphereGeometry, this.createSphereMaterial());
 
-		this.add(sphere);
-		this.spheres.push(sphere);
-
-		{ // edges
+		let edge;
+		{
 			let lineGeometry = new LineGeometry();
 			lineGeometry.setPositions( [
 					0, 0, 0,
@@ -364,61 +416,46 @@ export class Measure extends THREE.Object3D {
 			]);
 
 			let lineMaterial = new LineMaterial({
-				color: 0xff0000, 
-				linewidth: 2, 
+				color: 0xff0000,
+				linewidth: 2,
 				resolution:  new THREE.Vector2(1000, 1000),
 			});
 
 			lineMaterial.depthTest = false;
 
-			let edge = new Line2(lineGeometry, lineMaterial);
+			edge = new Line2(lineGeometry, lineMaterial);
 			edge.visible = true;
-
-			this.add(edge);
-			this.edges.push(edge);
 		}
 
-		{ // edge labels
-			let edgeLabel = new TextSprite();
-			edgeLabel.setBorderColor({r: 0, g: 0, b: 0, a: 1.0});
-			edgeLabel.setBackgroundColor({r: 0, g: 0, b: 0, a: 1.0});
-			edgeLabel.material.depthTest = false;
-			edgeLabel.visible = false;
-			edgeLabel.fontsize = 16;
-			this.edgeLabels.push(edgeLabel);
-			this.add(edgeLabel);
-		}
+		let edgeLabel = new TextSprite();
+		edgeLabel.setBorderColor({r: 0, g: 0, b: 0, a: 1.0});
+		edgeLabel.setBackgroundColor({r: 0, g: 0, b: 0, a: 1.0});
+		edgeLabel.material.depthTest = false;
+		edgeLabel.visible = false;
+		edgeLabel.fontsize = 16;
 
-		{ // angle labels
-			let angleLabel = new TextSprite();
-			angleLabel.setBorderColor({r: 0, g: 0, b: 0, a: 1.0});
-			angleLabel.setBackgroundColor({r: 0, g: 0, b: 0, a: 1.0});
-			angleLabel.fontsize = 16;
-			angleLabel.material.depthTest = false;
-			angleLabel.material.opacity = 1;
-			angleLabel.visible = false;
-			this.angleLabels.push(angleLabel);
-			this.add(angleLabel);
-		}
+		let angleLabel = new TextSprite();
+		angleLabel.setBorderColor({r: 0, g: 0, b: 0, a: 1.0});
+		angleLabel.setBackgroundColor({r: 0, g: 0, b: 0, a: 1.0});
+		angleLabel.fontsize = 16;
+		angleLabel.material.depthTest = false;
+		angleLabel.material.opacity = 1;
+		angleLabel.visible = false;
 
-		{ // coordinate labels
-			let coordinateLabel = new TextSprite();
-			coordinateLabel.setBorderColor({r: 0, g: 0, b: 0, a: 1.0});
-			coordinateLabel.setBackgroundColor({r: 0, g: 0, b: 0, a: 1.0});
-			coordinateLabel.fontsize = 16;
-			coordinateLabel.material.depthTest = false;
-			coordinateLabel.material.opacity = 1;
-			coordinateLabel.visible = false;
-			this.coordinateLabels.push(coordinateLabel);
-			this.add(coordinateLabel);
-		}
+		let coordinateLabel = new TextSprite();
+		coordinateLabel.setBorderColor({r: 0, g: 0, b: 0, a: 1.0});
+		coordinateLabel.setBackgroundColor({r: 0, g: 0, b: 0, a: 1.0});
+		coordinateLabel.fontsize = 16;
+		coordinateLabel.material.depthTest = false;
+		coordinateLabel.material.opacity = 1;
+		coordinateLabel.visible = false;
 
 		{ // Event Listeners
 			let drag = (e) => {
 				let I = Utils.getMousePointCloudIntersection(
-					e.drag.end, 
-					e.viewer.scene.getActiveCamera(), 
-					e.viewer, 
+					e.drag.end,
+					e.viewer.scene.getActiveCamera(),
+					e.viewer,
 					e.viewer.scene.pointclouds,
 					{pickClipped: true});
 
@@ -426,7 +463,7 @@ export class Measure extends THREE.Object3D {
 					let i = this.spheres.indexOf(e.drag.object);
 					if (i !== -1) {
 						let point = this.points[i];
-						
+
 						// loop through current keys and cleanup ones that will be orphaned
 						for (let key of Object.keys(point)) {
 							if (!I.point[key]) {
@@ -438,7 +475,8 @@ export class Measure extends THREE.Object3D {
 							point[key] = I.point[key];
 						}
 
-						this.setPosition(i, I.location);
+						let snapped = Utils.snapToNearbyVertex(I.location, e.viewer, {excludeMeasure: this, excludeIndex: i});
+						this.setPosition(i, snapped || I.location);
 					}
 				}
 			};
@@ -454,14 +492,69 @@ export class Measure extends THREE.Object3D {
 				}
 			};
 
-			let mouseover = (e) => e.object.material.emissive.setHex(0x888888);
-			let mouseleave = (e) => e.object.material.emissive.setHex(0x000000);
+			let mouseover = (e) => {
+				e.object.material.emissive.setHex(0x888888);
+				this._hoveredIndex = this.spheres.indexOf(e.object);
+			};
+			let mouseleave = (e) => {
+				e.object.material.emissive.setHex(0x000000);
+				if (this._hoveredIndex === this.spheres.indexOf(e.object)) {
+					this._hoveredIndex = null;
+				}
+			};
 
 			sphere.addEventListener('drag', drag);
 			sphere.addEventListener('drop', drop);
 			sphere.addEventListener('mouseover', mouseover);
 			sphere.addEventListener('mouseleave', mouseleave);
+
+			// Right-click a vertex of a selected line to delete it. Gated on
+			// this.selected so it's a no-op while drawing (not yet selected) or on
+			// lines the user hasn't clicked into first - avoids accidental deletes
+			// while just navigating/inspecting predictions.
+			sphere.addEventListener('mouseup', (e) => {
+				if (!this.selected || e.button !== THREE.MOUSE.RIGHT) return;
+				if (this.points.length <= 2) return;
+
+				e.consume();
+				let i = this.spheres.indexOf(e.target);
+				if (i !== -1) this.removeMarker(i);
+			});
+
+			// Click a segment of a selected line to insert a vertex there. Reads the
+			// point/edge index from the InputHandler's own hoveredElements (populated
+			// by the preceding mousemove's raycast) rather than the mouseup payload,
+			// which only carries {type, viewer, consume} - see InputHandler.js onMouseUp.
+			edge.addEventListener('mouseup', (e) => {
+				if (!this.selected || e.button !== THREE.MOUSE.LEFT) return;
+
+				let hovered = e.viewer.inputHandler.hoveredElements.find(h => h.object === e.target);
+				if (!hovered) return;
+
+				e.consume();
+				let i = this.edges.indexOf(e.target);
+				if (i === -1) return;
+
+				let position = Utils.snapToNearbyVertex(hovered.point, e.viewer, {excludeMeasure: this}) || hovered.point.clone();
+				this.insertMarker(i + 1, position);
+			});
 		}
+
+		return {sphere, edge, edgeLabel, angleLabel, coordinateLabel};
+	}
+
+	addMarker (point) {
+		point = this._normalizePoint(point);
+		this.points.push(point);
+
+		let {sphere, edge, edgeLabel, angleLabel, coordinateLabel} = this._createVertexAt();
+
+		this.add(sphere, edge, edgeLabel, angleLabel, coordinateLabel);
+		this.spheres.push(sphere);
+		this.edges.push(edge);
+		this.edgeLabels.push(edgeLabel);
+		this.angleLabels.push(angleLabel);
+		this.coordinateLabels.push(coordinateLabel);
 
 		let event = {
 			type: 'marker_added',
@@ -471,6 +564,33 @@ export class Measure extends THREE.Object3D {
 		this.dispatchEvent(event);
 
 		this.setMarker(this.points.length - 1, point);
+	};
+
+	// Inserts a new vertex at `index`, splitting the edge that used to run from
+	// points[index - 1] to points[index]. update() fully re-derives all edge
+	// geometry/labels from this.points each call, so no manual geometry patching
+	// is needed here beyond getting the array insert position right.
+	insertMarker (index, point) {
+		point = this._normalizePoint(point);
+		this.points.splice(index, 0, point);
+
+		let {sphere, edge, edgeLabel, angleLabel, coordinateLabel} = this._createVertexAt();
+
+		this.add(sphere, edge, edgeLabel, angleLabel, coordinateLabel);
+		this.spheres.splice(index, 0, sphere);
+		this.edges.splice(index, 0, edge);
+		this.edgeLabels.splice(index, 0, edgeLabel);
+		this.angleLabels.splice(index, 0, angleLabel);
+		this.coordinateLabels.splice(index, 0, coordinateLabel);
+
+		this.dispatchEvent({
+			type: 'marker_added',
+			measurement: this,
+			sphere: sphere
+		});
+		this.dispatchEvent({type: 'marker_inserted', measurement: this, index: index});
+
+		this.update();
 	};
 
 	removeMarker (index) {
@@ -646,11 +766,18 @@ export class Measure extends THREE.Object3D {
 			// spheres
 			sphere.position.copy(point.position);
 			sphere.material.color = this.color;
+			sphere.material.emissive.setHex(this.selected ? 0x333333 : 0x000000);
 
 			{ // edges
 				let edge = this.edges[index];
 
-				edge.material.color = this.color;
+				if(this.selected){
+					edge.material.color = this.color.clone().lerp(new THREE.Color(0xffff00), 0.5);
+					edge.material.linewidth = 4;
+				}else{
+					edge.material.color = this.color;
+					edge.material.linewidth = 2;
+				}
 
 				edge.position.copy(point.position);
 
@@ -834,22 +961,37 @@ export class Measure extends THREE.Object3D {
 		// this.updateAzimuth();
 	};
 
+	// Only used to let a click on an edge select the whole Measure - mirrors
+	// BoxVolume.raycast (Volume.js), reporting a hit with object:this instead of the
+	// child mesh, in a local array so unrelated objects' entries in the shared
+	// `intersects` aren't touched. Deliberately does NOT also test spheres: spheres
+	// already raycast themselves natively (object:the sphere, for drag/hover/delete)
+	// and since Measure.raycast()'s hit would land at the exact same point/distance,
+	// the two would tie and - depending on scene-traversal order - could shadow the
+	// sphere's own mouseover/mouseleave dispatch (InputHandler only fires
+	// mouseover/mouseleave for the single closest hit overall), breaking hover
+	// highlighting and hovered-vertex tracking. Leaving spheres out means clicking
+	// exactly on a vertex doesn't select the line (clicking the edge next to it
+	// does), which is an acceptable gap given vertices are primarily for
+	// dragging/deleting, not selecting.
 	raycast (raycaster, intersects) {
-		for (let i = 0; i < this.points.length; i++) {
-			let sphere = this.spheres[i];
+		let local = [];
 
-			sphere.raycast(raycaster, intersects);
+		for (let i = 0; i < this.edges.length; i++) {
+			let edge = this.edges[i];
+			if (!edge.visible) continue;
+
+			let edgeHits = [];
+			edge.raycast(raycaster, edgeHits);
+			for (let hit of edgeHits) {
+				local.push({distance: hit.distance, object: this, point: hit.point.clone()});
+			}
 		}
 
-		// recalculate distances because they are not necessarely correct
-		// for scaled objects.
-		// see https://github.com/mrdoob/three.js/issues/5827
-		// TODO: remove this once the bug has been fixed
-		for (let i = 0; i < intersects.length; i++) {
-			let I = intersects[i];
-			I.distance = raycaster.ray.origin.distanceTo(I.point);
-		}
-		intersects.sort(function (a, b) { return a.distance - b.distance; });
+		if (local.length === 0) return;
+
+		local.sort((a, b) => a.distance - b.distance);
+		intersects.push(local[0]);
 	};
 
 	get showCoordinates () {

@@ -35,6 +35,8 @@
 
 	<script type="module">
 
+		import { importPredictionsAsMeasurements } from "./js/prediction-import.js";
+
 		// dataset(s) can optionally be pre-loaded via ?dataset=id1,id2 - otherwise the
 		// viewer starts empty and LAS/LAZ files are uploaded from the sidebar's Import panel.
 		const datasetParam = new URLSearchParams(window.location.search).get("dataset");
@@ -71,16 +73,85 @@
 			viewer.setDescription(metas.map(({meta}) => `${meta.sourceFile} - ${meta.epsg}`).join(" | "));
 		}
 
-		viewer.loadGUI(() => {
+		// loadGUI() asynchronously fetches sidebar.html and replaces
+		// #potree_sidebar_container's entire contents with it (jQuery .load()) -
+		// wrapped in a promise and awaited so nothing below that touches that
+		// container (the predict panel) runs before that swap, or it gets wiped
+		// out the moment the fetch resolves.
+		await new Promise(resolve => viewer.loadGUI(() => {
 			viewer.setLanguage('en');
 			$("#menu_tools").next().show();
 			$("#menu_scene").next().show();
 			$("#menu_filters").next().show();
 			viewer.toggleSidebar();
-		});
+			resolve();
+		}));
 
 		// class 1 = unclassified (buildings, trees, etc - from PDAL filters.smrf), class 2 = ground/road surface
 		viewer.setClassifications(Potree.ClassificationScheme.DEFAULT);
+
+		// Runs the trained U-Net (ml/infer.py + ml/vectorize_predictions.py, via
+		// webapp/server.py's /api/predict) on a dataset's source LAS and imports
+		// the resulting lane/crosswalk vectors as editable Measure objects. One
+		// row per pointcloud in the scene, prepended above Potree's own accordion
+		// menu so it's the first thing visible when the sidebar is open.
+		//
+		// Built reactively off scene.addEventListener('pointcloud_added', ...)
+		// instead of just the initial ?dataset= list, so it also covers
+		// pointclouds added later through the sidebar's own Scene > Import panel
+		// (src/viewer/sidebar.js) - the normal way to open a LAS/LAZ from inside
+		// an already-running viewer, without a page navigation.
+		const predictPanel = document.createElement("div");
+		predictPanel.style.cssText = "background: var(--bg-color); color: var(--font-color); "
+			+ "padding: 10px 12px; border-bottom: 1px solid black; "
+			+ "font-family: Arial, Helvetica, sans-serif; font-size: 13px;";
+		const predictTitle = document.createElement("div");
+		predictTitle.textContent = "차선/횡단보도 예측";
+		predictTitle.style.cssText = "font-weight: bold; margin-bottom: 6px;";
+		predictPanel.appendChild(predictTitle);
+		document.getElementById("potree_sidebar_container").prepend(predictPanel);
+
+		async function addPredictRow(dataset) {
+			const meta = await (await fetch(`/pointclouds/${dataset}/potree_meta.json`)).json();
+
+			const row = document.createElement("div");
+			row.style.cssText = "display: flex; align-items: center; gap: 8px; margin-bottom: 4px;";
+
+			const label = document.createElement("span");
+			label.textContent = meta.sourceFile;
+			label.title = meta.sourceFile;
+			label.style.cssText = "flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;";
+
+			const btn = document.createElement("button");
+			btn.textContent = "예측 실행";
+
+			const status = document.createElement("span");
+			status.style.cssText = "font-size: 11px; color: #9AA1A4;";
+
+			btn.addEventListener("click", async () => {
+				btn.disabled = true;
+				status.textContent = "예측 중... (씬 크기에 따라 몇 분 걸릴 수 있음)";
+				try {
+					const res = await fetch(`/api/predict?dataset=${encodeURIComponent(dataset)}`, {method: "POST"});
+					const data = await res.json();
+					if (!res.ok) throw new Error(data.detail || "예측 실패");
+
+					const geojson = await (await fetch(data.vectors)).json();
+					const counts = importPredictionsAsMeasurements(viewer, geojson);
+					status.textContent = `완료 - 차선 ${counts.lane}개, 횡단보도 ${counts.crosswalk}개 (모델: ${data.model}) - `
+						+ `Scene 패널에서 수정 후 SHP로 내보낼 수 있습니다.`;
+				} catch (err) {
+					status.textContent = "오류: " + err.message;
+				} finally {
+					btn.disabled = false;
+				}
+			});
+
+			row.append(label, btn, status);
+			predictPanel.appendChild(row);
+		}
+
+		viewer.scene.addEventListener("pointcloud_added", (e) => addPredictRow(e.pointcloud.name));
 
 		const promises = metas.map(({dataset, datasetPath}) => Potree.loadPointCloud(`${datasetPath}/metadata.json`, dataset));
 

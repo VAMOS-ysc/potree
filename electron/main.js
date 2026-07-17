@@ -8,6 +8,10 @@ const path = require('path');
 
 const REPO_ROOT = path.resolve(__dirname, '..');
 const PORT = 8080;
+// Opens straight into the (initially empty) viewer - its sidebar's Scene >
+// Import panel (src/viewer/sidebar.js) uploads a LAS/LAZ and adds it to the
+// running scene directly, no page navigation needed. /upload is a separate,
+// simpler upload-then-redirect page for the plain-web-app path (see README).
 const ENTRY_URL = `http://localhost:${PORT}/examples/lane_digitize.html`;
 
 app.commandLine.appendSwitch('no-sandbox');

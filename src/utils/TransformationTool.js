@@ -1,6 +1,7 @@
 
 import * as THREE from "../../libs/three.js/build/three.module.js";
 import {Utils} from "../utils.js";
+import {Measure} from "./Measure.js";
 
 export class TransformationTool {
 	constructor(viewer) {
@@ -734,7 +735,10 @@ export class TransformationTool {
 
 	update () {
 
-		if(this.selection.length === 1){
+		// Measure lines are selectable (for click-to-select/insert/delete-vertex) but
+		// don't support whole-object translate/rotate/scale - the gizmo would imply a
+		// capability that doesn't exist, so it's suppressed for that one type.
+		if(this.selection.length === 1 && !(this.selection[0] instanceof Measure)){
 
 			this.scene.visible = true;
 
